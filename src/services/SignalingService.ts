@@ -1,21 +1,11 @@
-// src/services/SignalingService.ts
-// Handles WebRTC signaling via Supabase Realtime
+﻿// src/services/SignalingService.ts
+// Handles WebRTC signaling via Supabase Realtime (Phase 1)
 
 import { supabase } from '../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { ISignalingService, SignalType, SignalMessage, OnSignalCallback } from './SignalingInterface';
 
-export type SignalType = 'offer' | 'answer' | 'ice-candidate';
-
-export interface SignalMessage {
-  type: SignalType;
-  payload: any;
-  from_device: string;
-  to_device?: string;
-}
-
-type OnSignalCallback = (msg: SignalMessage) => void;
-
-export class SignalingService {
+export class SignalingService implements ISignalingService {
   private channel: RealtimeChannel | null = null;
   private channelId: string;
   private myDeviceId: string;
@@ -29,7 +19,6 @@ export class SignalingService {
 
   // Subscribe to incoming signals for this device
   async subscribe(): Promise<void> {
-    // Subscribe to the Supabase realtime channel for signaling
     this.channel = supabase
       .channel(`signaling:${this.channelId}`)
       .on(
@@ -42,7 +31,6 @@ export class SignalingService {
         },
         (payload) => {
           const row = payload.new as any;
-          // Only process messages addressed to us (or broadcast)
           if (row.from_device === this.myDeviceId) return;
           if (row.to_device && row.to_device !== this.myDeviceId) return;
 

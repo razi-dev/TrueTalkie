@@ -1,21 +1,24 @@
-// src/screens/ChannelScreen.tsx
-// Active PTT channel screen — the main walkie-talkie UI
+﻿// src/screens/ChannelScreen.tsx
+// Active channel screen — PTT button, peer list, real-time audio
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
-  Vibration,
-  StatusBar,
   Animated,
+  Vibration,
   ScrollView,
+  StatusBar,
 } from 'react-native';
 import { useChannelStore } from '../store/channelStore';
 import { channelService } from '../services/ChannelService';
-import { stopForegroundService, updateForegroundService } from '../services/ForegroundService';
+import {
+  updateForegroundService,
+  stopForegroundService,
+} from '../services/ForegroundService';
 
 interface Props {
   onLeft: () => void;
@@ -23,21 +26,21 @@ interface Props {
 
 export default function ChannelScreen({ onLeft }: Props) {
   const {
-    myName,
     channelCode,
-    peers,
     status,
+    peers,
+    myName,
+    mode,
+    localIp,
     isTransmitting,
     setTransmitting,
     transmittingPeer,
   } = useChannelStore();
 
-  // Pulse animation for PTT button
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  // Glow animation when receiving
   const glowAnim = useRef(new Animated.Value(0)).current;
 
-  // Start pulse when transmitting
+  // Pulse animation while transmitting
   useEffect(() => {
     if (isTransmitting) {
       Animated.loop(
@@ -52,7 +55,7 @@ export default function ChannelScreen({ onLeft }: Props) {
     }
   }, [isTransmitting]);
 
-  // Glow when someone else is talking
+  // Glow animation when receiving audio from someone else
   useEffect(() => {
     if (transmittingPeer) {
       Animated.loop(
@@ -71,7 +74,7 @@ export default function ChannelScreen({ onLeft }: Props) {
     setTransmitting(true);
     channelService.startTransmitting();
     updateForegroundService(channelCode, true);
-    Vibration.vibrate(30); // Short haptic on press
+    Vibration.vibrate(30);
   }, [channelCode]);
 
   const handlePTTRelease = useCallback(() => {
@@ -95,7 +98,7 @@ export default function ChannelScreen({ onLeft }: Props) {
   }[status];
 
   const statusLabel = {
-    connected: 'CONNECTED',
+    connected: mode === 'local' ? 'LOCAL MESH' : 'CONNECTED',
     connecting: 'CONNECTING...',
     disconnected: 'DISCONNECTED',
     error: 'ERROR',
@@ -108,8 +111,13 @@ export default function ChannelScreen({ onLeft }: Props) {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.channelLabel}>CHANNEL</Text>
+          <Text style={styles.channelLabel}>
+            {mode === 'local' ? 'LOCAL WI-FI CHANNEL' : 'CLOUD CHANNEL'}
+          </Text>
           <Text style={styles.channelCode}>{channelCode}</Text>
+          {mode === 'local' && localIp ? (
+            <Text style={styles.ipBadge}>IP: {localIp}</Text>
+          ) : null}
         </View>
         <View style={styles.statusBadge}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -119,9 +127,17 @@ export default function ChannelScreen({ onLeft }: Props) {
 
       {/* Receiving indicator */}
       {transmittingPeer && !isTransmitting ? (
-        <Animated.View style={[styles.receivingBanner, { opacity: glowAnim.interpolate({
-          inputRange: [0, 1], outputRange: [0.7, 1]
-        })}]}>
+        <Animated.View
+          style={[
+            styles.receivingBanner,
+            {
+              opacity: glowAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.7, 1],
+              }),
+            },
+          ]}
+        >
           <Text style={styles.receivingEmoji}>🔊</Text>
           <Text style={styles.receivingText}>{transmittingPeer.toUpperCase()} IS SPEAKING</Text>
         </Animated.View>
@@ -131,7 +147,9 @@ export default function ChannelScreen({ onLeft }: Props) {
 
       {/* Peers list */}
       <View style={styles.peersSection}>
-        <Text style={styles.peersLabel}>ON THIS CHANNEL</Text>
+        <Text style={styles.peersLabel}>
+          {mode === 'local' ? 'NEARBY WORKERS ON WI-FI' : 'WORKERS ON CHANNEL'} ({peers.length + 1})
+        </Text>
         <ScrollView style={styles.peersList}>
           {/* Self */}
           <View style={styles.peerRow}>
@@ -141,7 +159,11 @@ export default function ChannelScreen({ onLeft }: Props) {
           </View>
           {/* Others */}
           {peers.length === 0 ? (
-            <Text style={styles.noPeers}>Waiting for others to join...</Text>
+            <Text style={styles.noPeers}>
+              {mode === 'local'
+                ? 'Waiting for other workers on the same Wi-Fi/Hotspot...'
+                : 'Waiting for others to join...'}
+            </Text>
           ) : (
             peers.map((peer) => (
               <View key={peer.deviceId} style={styles.peerRow}>
@@ -157,7 +179,7 @@ export default function ChannelScreen({ onLeft }: Props) {
       {/* PTT Button */}
       <View style={styles.pttArea}>
         {isTransmitting && (
-          <Text style={styles.transmittingLabel}>🎙️ TRANSMITTING</Text>
+          <Text style={styles.transmittingLabel}>🎙️ TRANSMITTING LIVE VOICE</Text>
         )}
 
         <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
@@ -168,14 +190,14 @@ export default function ChannelScreen({ onLeft }: Props) {
             activeOpacity={1}
             delayPressIn={0}
           >
-            <Text style={styles.pttIcon}>{isTransmitting ? '🎙️' : '📢'}</Text>
+            <Text style={styles.pttIcon}>{isTransmitting ? '🎙️' : '📻'}</Text>
             <Text style={styles.pttLabel}>
               {isTransmitting ? 'TALKING' : 'HOLD TO TALK'}
             </Text>
           </TouchableOpacity>
         </Animated.View>
 
-        <Text style={styles.pttHint}>Hold the button to speak. Release to listen.</Text>
+        <Text style={styles.pttHint}>Hold button to speak. Release to hear others.</Text>
       </View>
 
       {/* Leave button */}
@@ -202,16 +224,22 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1a1a1a',
   },
   channelLabel: {
-    color: '#555',
+    color: '#666',
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 3,
+    letterSpacing: 2,
   },
   channelCode: {
     color: '#FFD600',
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '900',
     letterSpacing: 4,
+  },
+  ipBadge: {
+    color: '#00e676',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -221,6 +249,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#222',
   },
   statusDot: {
     width: 8,
@@ -261,14 +291,14 @@ const styles = StyleSheet.create({
   peersSection: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingTop: 16,
   },
   peersLabel: {
-    color: '#555',
+    color: '#666',
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 3,
-    marginBottom: 12,
+    letterSpacing: 2,
+    marginBottom: 10,
   },
   peersList: {
     flex: 1,
@@ -296,7 +326,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   noPeers: {
-    color: '#444',
+    color: '#555',
     fontSize: 13,
     paddingTop: 8,
     fontStyle: 'italic',
@@ -304,14 +334,14 @@ const styles = StyleSheet.create({
   pttArea: {
     alignItems: 'center',
     paddingBottom: 8,
-    paddingTop: 16,
+    paddingTop: 12,
   },
   transmittingLabel: {
     color: '#ff4444',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 3,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   pttBtn: {
     width: 180,
@@ -322,8 +352,7 @@ const styles = StyleSheet.create({
     borderColor: '#FFD600',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    // Shadow
+    gap: 6,
     shadowColor: '#FFD600',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.3,
@@ -347,9 +376,9 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
   pttHint: {
-    color: '#333',
+    color: '#444',
     fontSize: 11,
-    marginTop: 16,
+    marginTop: 14,
   },
   leaveBtn: {
     marginHorizontal: 24,

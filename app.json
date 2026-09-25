@@ -4,7 +4,7 @@
     "slug": "TrueTalkie",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/true_talkie_icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -13,14 +13,13 @@
     },
     "plugins": [
       "@config-plugins/react-native-webrtc",
-      "@notifee/react-native",
       [
         "expo-build-properties",
         {
           "android": {
             "minSdkVersion": 26,
-            "compileSdkVersion": 35,
-            "targetSdkVersion": 35
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
           }
         }
       ]
@@ -28,7 +27,9 @@
     "android": {
       "package": "com.truetalkie.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
         "backgroundColor": "#0a0a0a"
       },
       "permissions": [
@@ -49,7 +50,10 @@
       "bundleIdentifier": "com.truetalkie.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "True Talkie needs microphone access to transmit voice on the channel.",
-        "UIBackgroundModes": ["audio", "voip"]
+        "UIBackgroundModes": [
+          "audio",
+          "voip"
+        ]
       }
     },
     "web": {
@@ -57,4 +61,3 @@
     }
   }
 }
-
