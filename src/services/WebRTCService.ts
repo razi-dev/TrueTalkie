@@ -1,5 +1,5 @@
-// src/services/WebRTCService.ts
-// Core WebRTC P2P audio service
+﻿// src/services/WebRTCService.ts
+// Core WebRTC P2P audio service supporting both Internet and Local Wi-Fi Mesh
 
 import {
   RTCPeerConnection,
@@ -8,9 +8,11 @@ import {
   mediaDevices,
   MediaStream,
 } from 'react-native-webrtc';
-import { SignalingService } from './SignalingService';
+import { ISignalingService } from './SignalingInterface';
+// @ts-ignore
+import InCallManager from 'react-native-incall-manager';
 
-const ICE_SERVERS = [
+const STUN_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
@@ -18,18 +20,24 @@ const ICE_SERVERS = [
 export class WebRTCService {
   private peers: Map<string, RTCPeerConnection> = new Map();
   private localStream: MediaStream | null = null;
-  private signaling: SignalingService;
+  private remoteStreams: Map<string, MediaStream> = new Map();
+  private signaling: ISignalingService;
   private myDeviceId: string;
-  private isMuted: boolean = true; // Start muted (receive-only)
+  private isMuted: boolean = true;
+  private isLocalMode: boolean = false;
 
-  constructor(signaling: SignalingService, myDeviceId: string) {
+  constructor(signaling: ISignalingService, myDeviceId: string, isLocalMode: boolean = false) {
     this.signaling = signaling;
     this.myDeviceId = myDeviceId;
+    this.isLocalMode = isLocalMode;
   }
 
-  // Get microphone access
   async initLocalStream(): Promise<void> {
     try {
+      // Route audio to loudspeaker
+      InCallManager.start({ media: 'audio' });
+      InCallManager.setForceSpeakerphoneOn(true);
+
       const stream = await mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -40,20 +48,17 @@ export class WebRTCService {
         video: false,
       });
       this.localStream = stream;
-      // Start muted — only transmit when PTT is pressed
       this.setMuted(true);
-      console.log('[WebRTC] Local stream ready');
+      console.log('[WebRTC] Local stream ready, mode:', this.isLocalMode ? 'LOCAL_WIFI' : 'INTERNET');
     } catch (err) {
       console.error('[WebRTC] Mic access failed:', err);
       throw err;
     }
   }
 
-  // Called when a new peer joins the channel
   async createOffer(toDeviceId: string): Promise<void> {
-    const pc = this.createPeerConnection(toDeviceId);
+    const pc = this.getOrCreatePeerConnection(toDeviceId);
 
-    // Add local audio tracks
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!);
@@ -71,9 +76,8 @@ export class WebRTCService {
     console.log('[WebRTC] Offer sent to', toDeviceId);
   }
 
-  // Handle incoming offer from a peer
   async handleOffer(fromDeviceId: string, offerPayload: any): Promise<void> {
-    const pc = this.createPeerConnection(fromDeviceId);
+    const pc = this.getOrCreatePeerConnection(fromDeviceId);
 
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
@@ -93,7 +97,6 @@ export class WebRTCService {
     console.log('[WebRTC] Answer sent to', fromDeviceId);
   }
 
-  // Handle incoming answer
   async handleAnswer(fromDeviceId: string, answerPayload: any): Promise<void> {
     const pc = this.peers.get(fromDeviceId);
     if (!pc) return;
@@ -101,7 +104,6 @@ export class WebRTCService {
     console.log('[WebRTC] Remote description set for', fromDeviceId);
   }
 
-  // Handle incoming ICE candidate
   async handleIceCandidate(fromDeviceId: string, candidatePayload: any): Promise<void> {
     const pc = this.peers.get(fromDeviceId);
     if (!pc || !candidatePayload) return;
@@ -112,13 +114,11 @@ export class WebRTCService {
     }
   }
 
-  // PTT: enable microphone (start transmitting)
   startTransmitting(): void {
     this.setMuted(false);
     console.log('[WebRTC] 🎙️ Transmitting...');
   }
 
-  // PTT: mute microphone (stop transmitting)
   stopTransmitting(): void {
     this.setMuted(true);
     console.log('[WebRTC] 🔇 Stopped transmitting');
@@ -133,15 +133,28 @@ export class WebRTCService {
     }
   }
 
-  // Create and configure a peer connection
-  private createPeerConnection(deviceId: string): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  private getOrCreatePeerConnection(deviceId: string): RTCPeerConnection {
+    const existing = this.peers.get(deviceId);
+    if (existing) return existing;
+
+    // In local Wi-Fi mode without Internet, empty iceServers prevents STUN timeout delays
+    const iceServers = this.isLocalMode ? [] : STUN_ICE_SERVERS;
+    const pc = new RTCPeerConnection({ iceServers });
     this.peers.set(deviceId, pc);
 
-    // Send ICE candidates to the peer via signaling
     pc.addEventListener('icecandidate', (event: any) => {
       if (event.candidate) {
         this.signaling.send('ice-candidate', event.candidate, deviceId);
+      }
+    });
+
+    pc.addEventListener('track', (event: any) => {
+      console.log('[WebRTC] Remote track received from', deviceId);
+      if (event.streams && event.streams[0]) {
+        const remoteStream = event.streams[0];
+        this.remoteStreams.set(deviceId, remoteStream);
+        InCallManager.setForceSpeakerphoneOn(true);
+        console.log('[WebRTC] Remote audio active for', deviceId);
       }
     });
 
@@ -149,17 +162,29 @@ export class WebRTCService {
       console.log(`[WebRTC] Peer ${deviceId} state: ${pc.connectionState}`);
     });
 
+    pc.addEventListener('iceconnectionstatechange', () => {
+      console.log(`[WebRTC] ICE ${deviceId}: ${pc.iceConnectionState}`);
+    });
+
     return pc;
   }
 
-  // Clean up all peer connections
+  async closePeer(deviceId: string): Promise<void> {
+    const pc = this.peers.get(deviceId);
+    if (pc) {
+      pc.close();
+      this.peers.delete(deviceId);
+    }
+    this.remoteStreams.delete(deviceId);
+  }
+
   async cleanup(): Promise<void> {
+    InCallManager.stop();
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
-
     this.peers.forEach((pc) => pc.close());
     this.peers.clear();
-
+    this.remoteStreams.clear();
     console.log('[WebRTC] Cleaned up');
   }
 
@@ -170,5 +195,9 @@ export class WebRTCService {
   isConnectedTo(deviceId: string): boolean {
     const pc = this.peers.get(deviceId);
     return pc?.connectionState === 'connected';
+  }
+
+  getRemoteStreams(): Map<string, MediaStream> {
+    return this.remoteStreams;
   }
 }

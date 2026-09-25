@@ -1,9 +1,10 @@
-// src/store/channelStore.ts
+﻿// src/store/channelStore.ts
 // Global state using Zustand
 
 import { create } from 'zustand';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type NetworkMode = 'local' | 'internet';
 
 export interface Peer {
   deviceId: string;
@@ -16,6 +17,12 @@ interface ChannelStore {
   myDeviceId: string;
   myName: string;
   setMyName: (name: string) => void;
+
+  // Network Mode
+  mode: NetworkMode;
+  setMode: (mode: NetworkMode) => void;
+  localIp: string | null;
+  setLocalIp: (ip: string | null) => void;
 
   // Channel
   channelCode: string;
@@ -40,7 +47,6 @@ interface ChannelStore {
   setTransmittingPeer: (name: string | null) => void;
 }
 
-// Generate a stable device ID for this install
 const generateDeviceId = () =>
   'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 
@@ -49,10 +55,23 @@ export const useChannelStore = create<ChannelStore>((set) => ({
   myName: 'Worker',
   setMyName: (name) => set({ myName: name }),
 
+  mode: 'local', // Default to Local Wi-Fi Mesh (Phase 2, 0% Internet)
+  setMode: (mode) => set({ mode }),
+  localIp: null,
+  setLocalIp: (ip) => set({ localIp: ip }),
+
   channelCode: '',
   channelId: null,
   setChannel: (code, id) => set({ channelCode: code, channelId: id }),
-  clearChannel: () => set({ channelCode: '', channelId: null, peers: [], status: 'disconnected' }),
+  clearChannel: () =>
+    set({
+      channelCode: '',
+      channelId: null,
+      peers: [],
+      status: 'disconnected',
+      localIp: null,
+      transmittingPeer: null,
+    }),
 
   status: 'disconnected',
   setStatus: (status) => set({ status }),

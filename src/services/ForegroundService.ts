@@ -1,74 +1,74 @@
-// src/services/ForegroundService.ts
-// Android foreground service via @notifee/react-native
+﻿// src/services/ForegroundService.ts
+// Android foreground service using expo-notifications
 // Keeps audio alive when phone is locked
 
-import notifee, { AndroidImportance, AndroidColor } from '@notifee/react-native';
+import * as Notifications from "expo-notifications";
+import { Platform } from "react-native";
 
-const CHANNEL_ID = 'truetalkie_service';
-const NOTIFICATION_ID = 'truetalkie_active';
+const CHANNEL_ID = "truetalkie_service";
+const NOTIFICATION_ID = "truetalkie-active-99";
+
+// Configure how notifications appear
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: false,
+    shouldShowAlert: false,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+    shouldShowList: false,
+  }),
+});
 
 export async function startForegroundService(channelCode: string): Promise<void> {
-  // Create notification channel (Android requirement)
-  await notifee.createChannel({
-    id: CHANNEL_ID,
-    name: 'True Talkie Active',
-    importance: AndroidImportance.LOW, // Low = no sound, just persistent
-    lights: false,
-    vibration: false,
+  if (Platform.OS !== "android") return;
+
+  // Create Android notification channel
+  await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    name: "True Talkie Active",
+    importance: Notifications.AndroidImportance.LOW,
+    sound: null,
+    vibrationPattern: null,
+    enableVibrate: false,
   });
 
-  // Display the foreground service notification
-  await notifee.displayNotification({
-    id: NOTIFICATION_ID,
-    title: '🎙️ True Talkie Active',
-    body: `Listening on ${channelCode} — hold PTT to talk`,
-    android: {
-      channelId: CHANNEL_ID,
-      asForegroundService: true,
-      ongoing: true,         // Cannot be swiped away
-      smallIcon: 'ic_notification',
-      color: AndroidColor.YELLOW,
-      pressAction: {
-        id: 'default',       // Tap notification → opens app
-      },
-      actions: [
-        {
-          title: '🔇 Leave Channel',
-          pressAction: { id: 'leave' },
-        },
-      ],
+  await Notifications.scheduleNotificationAsync({
+    identifier: NOTIFICATION_ID,
+    content: {
+      title: "True Talkie Active",
+      body: `Listening on ${channelCode}`,
+      data: { channelCode },
+      sticky: true,
+      autoDismiss: false,
     },
+    trigger: null, // Show immediately
   });
 
-  console.log('[ForegroundService] Started for', channelCode);
+  console.log("[ForegroundService] Started for", channelCode);
 }
 
-export async function updateForegroundService(channelCode: string, isTransmitting: boolean): Promise<void> {
-  await notifee.displayNotification({
-    id: NOTIFICATION_ID,
-    title: isTransmitting ? '🎙️ TRANSMITTING...' : '🔊 True Talkie Active',
-    body: isTransmitting
-      ? `Broadcasting on ${channelCode}`
-      : `Listening on ${channelCode} — hold PTT to talk`,
-    android: {
-      channelId: CHANNEL_ID,
-      asForegroundService: true,
-      ongoing: true,
-      smallIcon: 'ic_notification',
-      color: isTransmitting ? AndroidColor.RED : AndroidColor.YELLOW,
-      pressAction: { id: 'default' },
-      actions: [
-        {
-          title: '🔇 Leave Channel',
-          pressAction: { id: 'leave' },
-        },
-      ],
+export async function updateForegroundService(
+  channelCode: string,
+  isTransmitting: boolean
+): Promise<void> {
+  if (Platform.OS !== "android") return;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: NOTIFICATION_ID,
+    content: {
+      title: isTransmitting ? "Transmitting..." : "True Talkie Active",
+      body: isTransmitting
+        ? `Broadcasting on ${channelCode}`
+        : `Listening on ${channelCode}`,
+      data: { channelCode },
+      sticky: true,
+      autoDismiss: false,
     },
+    trigger: null,
   });
 }
 
 export async function stopForegroundService(): Promise<void> {
-  await notifee.stopForegroundService();
-  await notifee.cancelNotification(NOTIFICATION_ID);
-  console.log('[ForegroundService] Stopped');
+  if (Platform.OS !== "android") return;
+  await Notifications.dismissNotificationAsync(NOTIFICATION_ID);
+  console.log("[ForegroundService] Stopped");
 }
