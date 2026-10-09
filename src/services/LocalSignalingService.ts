@@ -1,5 +1,5 @@
 ﻿// src/services/LocalSignalingService.ts
-// Handles 100% offline local Wi-Fi peer discovery and WebRTC signaling via UDP
+// Handles 100% offline local Wi-Fi peer discovery and signaling via UDP
 
 import LocalMesh from '../../modules/local-mesh';
 import { ISignalingService, SignalType, SignalMessage, OnSignalCallback } from './SignalingInterface';
@@ -20,6 +20,7 @@ export interface LocalSignalingCallbacks {
   onPeersChanged: (peers: { deviceId: string; name: string }[]) => void;
   onTransmittingChanged: (deviceId: string | null, name: string | null) => void;
   onNewPeer: (peerDeviceId: string) => void;
+  onPeerRemoved?: (peerDeviceId: string) => void;
 }
 
 export class LocalSignalingService implements ISignalingService {
@@ -32,6 +33,8 @@ export class LocalSignalingService implements ISignalingService {
   private pruneTimer: any = null;
   private subscription: any = null;
   private myIp: string | null = null;
+  private signalSequence = 0;
+  private seenSignalIds = new Map<string, number>();
 
   constructor(
     channelCode: string,
@@ -81,6 +84,19 @@ export class LocalSignalingService implements ISignalingService {
       if (!data || data.channel !== this.channelCode) return;
       if (data.from_device === this.myDeviceId) return; // Ignore own packets
 
+      if (typeof data.messageId === 'string') {
+        const now = Date.now();
+        for (const [messageId, seenAt] of this.seenSignalIds) {
+          if (now - seenAt > 30000) this.seenSignalIds.delete(messageId);
+        }
+        if (this.seenSignalIds.has(data.messageId)) {
+          return;
+        }
+        this.seenSignalIds.set(data.messageId, now);
+      }
+
+      console.log('[LocalSignaling] Packet received from', senderIp, 'type:', data.type, 'from:', data.name || data.from_device);
+
       switch (data.type) {
         case 'presence':
           this.handlePresence(data, senderIp);
@@ -90,9 +106,13 @@ export class LocalSignalingService implements ISignalingService {
         case 'answer':
         case 'ice-candidate':
           if (data.to_device && data.to_device !== this.myDeviceId) return;
+          const payloadWithIp = data.payload;
+          if (payloadWithIp && typeof payloadWithIp === 'object' && senderIp) {
+            payloadWithIp.senderIp = senderIp;
+          }
           this.callbacks.onSignal({
             type: data.type as SignalType,
-            payload: data.payload,
+            payload: payloadWithIp,
             from_device: data.from_device,
             to_device: data.to_device,
           });
@@ -109,6 +129,8 @@ export class LocalSignalingService implements ISignalingService {
         case 'leave':
           if (this.peers.has(data.from_device)) {
             this.peers.delete(data.from_device);
+            this.callbacks.onPeerRemoved?.(data.from_device);
+            this.callbacks.onTransmittingChanged(null, null);
             this.notifyPeersChanged();
           }
           break;
@@ -128,17 +150,22 @@ export class LocalSignalingService implements ISignalingService {
       lastSeen: Date.now(),
     });
 
+    // Keep native audio engine updated with discovered peer IPs
+    try {
+      (LocalMesh as any).updatePeerIps?.(this.getPeerIps());
+    } catch (e) {}
+
     if (isNew) {
       console.log('[LocalSignaling] Discovered new peer:', data.name, '(', data.from_device, ') at', senderIp);
       this.notifyPeersChanged();
 
-      // Send direct unicast response so the other device knows about us immediately
+      // Send direct unicast response immediately (3 bursts to guarantee receipt over Wi-Fi/Hotspot)
       this.sendDirectPresence(senderIp);
+      setTimeout(() => this.sendDirectPresence(senderIp), 150);
+      setTimeout(() => this.sendDirectPresence(senderIp), 350);
 
-      // Deterministic tie-breaker: Device with higher string ID initiates WebRTC offer
       if (this.myDeviceId > data.from_device) {
-        console.log('[LocalSignaling] Initiating WebRTC offer to', data.from_device);
-        this.callbacks.onNewPeer(data.from_device);
+        this.callbacks.onNewPeer?.(data.from_device);
       }
     }
   }
@@ -151,6 +178,17 @@ export class LocalSignalingService implements ISignalingService {
       name: this.myName,
     });
     LocalMesh.sendBroadcast(packet, LOCAL_PORT);
+
+    // Also send direct unicast heartbeat to every known peer
+    for (const peer of this.peers.values()) {
+      if (peer.ip) {
+        LocalMesh.sendDirect(peer.ip, LOCAL_PORT, packet);
+      }
+    }
+
+    try {
+      (LocalMesh as any).updatePeerIps?.(this.getPeerIps());
+    } catch (e) {}
   }
 
   private sendDirectPresence(targetIp: string): void {
@@ -160,6 +198,7 @@ export class LocalSignalingService implements ISignalingService {
       from_device: this.myDeviceId,
       name: this.myName,
     });
+    console.log('[LocalSignaling] Sending direct presence to:', targetIp);
     LocalMesh.sendDirect(targetIp, LOCAL_PORT, packet);
   }
 
@@ -172,23 +211,31 @@ export class LocalSignalingService implements ISignalingService {
       transmitting,
     });
     await LocalMesh.sendBroadcast(packet, LOCAL_PORT);
+
+    for (const peer of this.peers.values()) {
+      if (peer.ip) {
+        LocalMesh.sendDirect(peer.ip, LOCAL_PORT, packet);
+      }
+    }
   }
 
   async send(type: SignalType, payload: any, toDevice?: string): Promise<void> {
+    const messageId = `${this.myDeviceId}:${Date.now()}:${++this.signalSequence}`;
     const packet = JSON.stringify({
       type,
       channel: this.channelCode,
       from_device: this.myDeviceId,
       to_device: toDevice,
+      messageId,
       payload,
     });
 
     const targetPeer = toDevice ? this.peers.get(toDevice) : null;
     if (targetPeer && targetPeer.ip) {
       await LocalMesh.sendDirect(targetPeer.ip, LOCAL_PORT, packet);
-    } else {
-      await LocalMesh.sendBroadcast(packet, LOCAL_PORT);
     }
+    // Also send broadcast so packets reach peer even if router filters unicast UDP
+    await LocalMesh.sendBroadcast(packet, LOCAL_PORT);
   }
 
   private pruneStalePeers(): void {
@@ -199,11 +246,16 @@ export class LocalSignalingService implements ISignalingService {
       if (now - peer.lastSeen > PEER_TIMEOUT) {
         console.log('[LocalSignaling] Peer timed out:', peer.name, '(', deviceId, ')');
         this.peers.delete(deviceId);
+        this.callbacks.onPeerRemoved?.(deviceId);
         changed = true;
       }
     });
 
     if (changed) {
+      try {
+        (LocalMesh as any).updatePeerIps?.(this.getPeerIps());
+      } catch (e) {}
+      this.callbacks.onTransmittingChanged(null, null);
       this.notifyPeersChanged();
     }
   }
@@ -214,6 +266,12 @@ export class LocalSignalingService implements ISignalingService {
       name: p.name,
     }));
     this.callbacks.onPeersChanged(list);
+  }
+
+  getPeerIps(): string[] {
+    return Array.from(this.peers.values())
+      .map((p) => p.ip)
+      .filter((ip): ip is string => Boolean(ip));
   }
 
   getLocalIp(): string | null {
@@ -237,6 +295,8 @@ export class LocalSignalingService implements ISignalingService {
     this.subscription?.remove?.();
     await LocalMesh.stop();
     this.peers.clear();
+    this.seenSignalIds.clear();
+    this.callbacks.onPeersChanged([]);
     console.log('[LocalSignaling] Stopped');
   }
 }
