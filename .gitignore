@@ -42,3 +42,14 @@ yarn-error.*
 
 
 /claude
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Module build directories
+modules/**/build/
+modules/**/.gradle/
+scratch/
+
+*.crdownload

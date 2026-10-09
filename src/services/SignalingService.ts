@@ -1,15 +1,16 @@
-﻿// src/services/SignalingService.ts
-// Handles WebRTC signaling via Supabase Realtime (Phase 1)
+// src/services/SignalingService.ts
+// Handles WebRTC signaling via Supabase Realtime Broadcast (Phase 1)
 
 import { supabase } from '../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { ISignalingService, SignalType, SignalMessage, OnSignalCallback } from './SignalingInterface';
+import { ISignalingService, SignalType, OnSignalCallback } from './SignalingInterface';
 
 export class SignalingService implements ISignalingService {
   private channel: RealtimeChannel | null = null;
   private channelId: string;
   private myDeviceId: string;
   private onSignal: OnSignalCallback;
+  private subscribed = false;
 
   constructor(channelId: string, myDeviceId: string, onSignal: OnSignalCallback) {
     this.channelId = channelId;
@@ -17,54 +18,70 @@ export class SignalingService implements ISignalingService {
     this.onSignal = onSignal;
   }
 
-  // Subscribe to incoming signals for this device
   async subscribe(): Promise<void> {
-    this.channel = supabase
-      .channel(`signaling:${this.channelId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'signaling',
-          filter: `channel_id=eq.${this.channelId}`,
-        },
-        (payload) => {
-          const row = payload.new as any;
-          if (row.from_device === this.myDeviceId) return;
-          if (row.to_device && row.to_device !== this.myDeviceId) return;
+    this.channel = supabase.channel('signaling:' + this.channelId);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) { settled = true; reject(new Error('Timed out connecting to Internet audio signaling.')); }
+      }, 15000);
+      this.channel!
+      .on('broadcast', { event: 'signal' }, ({ payload }) => {
+        if (!payload) return;
+        if (payload.from_device === this.myDeviceId) return;
+        if (payload.to_device && payload.to_device !== this.myDeviceId) return;
 
-          this.onSignal({
-            type: row.type as SignalType,
-            payload: row.payload,
-            from_device: row.from_device,
-            to_device: row.to_device,
-          });
+        console.log('[SignalingService] Signal received:', payload.type, 'from', payload.from_device);
+
+        this.onSignal({
+          type: payload.type as SignalType,
+          payload: payload.payload,
+          from_device: payload.from_device,
+          to_device: payload.to_device,
+        });
+      })
+      .subscribe((status, err) => {
+        console.log('[SignalingService] Channel status:', status);
+        if (status === 'SUBSCRIBED') {
+          this.subscribed = true;
+          if (!settled) { settled = true; clearTimeout(timer); resolve(); }
+        } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') && !settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error(`Internet audio signaling ${status.toLowerCase()}${err?.message ? `: ${err.message}` : ''}`));
         }
-      )
-      .subscribe();
+      });
+    });
   }
 
-  // Send a signal to a specific peer (or broadcast if no toDevice)
   async send(type: SignalType, payload: any, toDevice?: string): Promise<void> {
-    const { error } = await supabase.from('signaling').insert({
-      channel_id: this.channelId,
-      from_device: this.myDeviceId,
-      to_device: toDevice ?? null,
-      type,
-      payload,
-    });
+    if (!this.channel || !this.subscribed) {
+      console.warn('[SignalingService] Dropped signal before channel subscribed:', type);
+      return;
+    }
 
-    if (error) {
-      console.error('[SignalingService] Send error:', error.message);
+    try {
+      await this.channel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: {
+          from_device: this.myDeviceId,
+          to_device: toDevice ?? null,
+          type,
+          payload,
+        },
+      });
+      console.log('[SignalingService] Signal sent:', type, 'to', toDevice || 'all');
+    } catch (err) {
+      console.error('[SignalingService] Broadcast error:', err);
     }
   }
 
-  // Unsubscribe when leaving channel
   async unsubscribe(): Promise<void> {
     if (this.channel) {
       await supabase.removeChannel(this.channel);
       this.channel = null;
+      this.subscribed = false;
     }
   }
 }

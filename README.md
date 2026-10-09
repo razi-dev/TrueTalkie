@@ -43,6 +43,20 @@ eas build --platform android --profile development
 
 ---
 
+## Internet audio relay (TURN)
+
+Cloud signaling through Supabase does not relay voice. WebRTC tries a direct route using STUN first, but some mobile carriers, VPNs, and routers block direct peer connections. For those networks, configure a TURN relay. The live Audio Diagnostics panel shows the ICE setup, candidate types, selected route, and ICE errors.
+
+Set these environment variables before building an Internet-enabled app:
+
+```text
+EXPO_PUBLIC_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
+EXPO_PUBLIC_TURN_USERNAME=<username>
+EXPO_PUBLIC_TURN_CREDENTIAL=<credential>
+```
+
+`EXPO_PUBLIC_` values are bundled into the app and can be extracted from it. This app currently reads static build-time credentials, so use them only for troubleshooting; do not embed a permanent TURN password. Production use needs a change to fetch short-lived TURN credentials from an authenticated backend. Rebuild and install the app on both phones after configuring TURN. Local Wi-Fi mode intentionally uses LAN candidates without a TURN relay; both phones must be on the same Wi-Fi network with device-to-device traffic allowed (guest networks and client isolation can block it).
+
 ## Project Structure
 
 ```

@@ -27,9 +27,7 @@
     "android": {
       "package": "com.truetalkie.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "foregroundImage": "./assets/true_talkie_icon.png",
         "backgroundColor": "#0a0a0a"
       },
       "permissions": [
@@ -42,7 +40,10 @@
         "RECEIVE_BOOT_COMPLETED",
         "INTERNET",
         "ACCESS_NETWORK_STATE",
-        "ACCESS_WIFI_STATE"
+        "CHANGE_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE"
       ]
     },
     "ios": {

@@ -1,4 +1,4 @@
-﻿// src/services/SignalingInterface.ts
+// src/services/SignalingInterface.ts
 
 export type SignalType = 'offer' | 'answer' | 'ice-candidate';
 

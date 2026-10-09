@@ -1,4 +1,4 @@
-﻿// src/store/channelStore.ts
+// src/store/channelStore.ts
 // Global state using Zustand
 
 import { create } from 'zustand';
