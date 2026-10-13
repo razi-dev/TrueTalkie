@@ -20,6 +20,8 @@ import {
 import LottieView from 'lottie-react-native';
 import { useChannelStore } from '../store/channelStore';
 import { channelService } from '../services/ChannelService';
+import { safetyService } from '../services/SafetyService';
+import TermsAgreementModal from '../components/TermsAgreementModal';
 import { startForegroundService } from '../services/ForegroundService';
 // @ts-ignore
 import InCallManager from 'react-native-incall-manager';
@@ -55,6 +57,7 @@ export default function HomeScreen({ onJoined }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [volume, setVolumeState] = useState(80);
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [showTerms, setShowTerms] = useState(false);
 
   // Animated Pill position for Mode Switcher (0 for local, 1 for internet)
   const modeAnim = useRef(new Animated.Value(mode === 'local' ? 0 : 1)).current;
@@ -83,6 +86,13 @@ export default function HomeScreen({ onJoined }: Props) {
   };
 
   const handleJoin = async () => {
+    // Check Community Guidelines & Terms EULA
+    const accepted = await safetyService.hasAcceptedTerms();
+    if (!accepted) {
+      setShowTerms(true);
+      return;
+    }
+
     const code = customChannelCode.trim().toUpperCase();
     const name = myName.trim();
     if (!code) return setError('Enter a channel name (e.g. ALPHA-1 or CH-01)');
@@ -373,6 +383,16 @@ export default function HomeScreen({ onJoined }: Props) {
           </View>
         </View>
       </Modal>
+
+      <TermsAgreementModal
+        visible={showTerms}
+        myDeviceId={myDeviceId}
+        onAccepted={() => {
+          setShowTerms(false);
+          handleJoin();
+        }}
+        onCancel={() => setShowTerms(false)}
+      />
     </SafeAreaView>
   );
 }

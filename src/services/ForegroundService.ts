@@ -1,4 +1,4 @@
-﻿// src/services/ForegroundService.ts
+// src/services/ForegroundService.ts
 // Android foreground service using expo-notifications
 // Keeps audio alive when phone is locked
 
@@ -21,6 +21,16 @@ Notifications.setNotificationHandler({
 
 export async function startForegroundService(channelCode: string): Promise<void> {
   if (Platform.OS !== "android") return;
+
+  try {
+    // Request notification permission for Android 13+ (API 33+)
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    if (existingStatus !== 'granted') {
+      await Notifications.requestPermissionsAsync();
+    }
+  } catch (e) {
+    console.warn('[ForegroundService] Notification permission check error:', e);
+  }
 
   // Create Android notification channel
   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {

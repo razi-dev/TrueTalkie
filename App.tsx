@@ -1,5 +1,5 @@
 import "react-native-get-random-values";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, ActivityIndicator } from "react-native";
 import {
   useFonts,
@@ -11,12 +11,18 @@ import {
 import { channelService } from "./src/services/ChannelService";
 import { stopForegroundService } from "./src/services/ForegroundService";
 import { useChannelStore } from "./src/store/channelStore";
+import { inAppUpdateService } from "./src/services/InAppUpdateService";
 import HomeScreen from "./src/screens/HomeScreen";
 import ChannelScreen from "./src/screens/ChannelScreen";
 
 export default function App() {
   const [screen, setScreen] = useState<"home" | "channel">("home");
   const { clearChannel } = useChannelStore();
+
+  useEffect(() => {
+    // Check for Google Play Store updates on launch
+    inAppUpdateService.checkForUpdate();
+  }, []);
 
   const [fontsLoaded] = useFonts({
     Fredoka_400Regular,

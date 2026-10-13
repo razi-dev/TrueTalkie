@@ -1,6 +1,7 @@
-﻿// src/services/WebRTCService.ts
+import { safetyService } from './SafetyService';
+// src/services/WebRTCService.ts
 // Core WebRTC multi-peer audio mesh powered by SimplePeer architecture.
-// Supports 3-4+ devices across both Local Wi-Fi Mesh and Internet Supabase Cloud.
+// Supports 3-4+ devices across both Local Wi-Fi Mesh and Internet Supabase Cloud (with Metered TURN).
 
 import { Platform, PermissionsAndroid } from 'react-native';
 import {
@@ -17,14 +18,33 @@ const STUN_ICE_SERVERS = [
   { urls: 'stun:global.stun.twilio.com:3478' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
 ];
 
-const turnUrls = process.env.EXPO_PUBLIC_TURN_URLS
+const DEFAULT_METERED_TURN_URLS = [
+  'turn:global.relay.metered.ca:80',
+  'turn:global.relay.metered.ca:80?transport=tcp',
+  'turn:global.relay.metered.ca:443',
+  'turns:global.relay.metered.ca:443?transport=tcp',
+];
+
+const envTurnUrls = process.env.EXPO_PUBLIC_TURN_URLS
   ?.split(',')
   .map((url: string) => url.trim())
-  .filter(Boolean) ?? [];
-const TURN_ICE_SERVERS = turnUrls.length > 0 && process.env.EXPO_PUBLIC_TURN_USERNAME && process.env.EXPO_PUBLIC_TURN_CREDENTIAL
-  ? [{ urls: turnUrls, username: process.env.EXPO_PUBLIC_TURN_USERNAME, credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL }]
+  .filter(Boolean);
+
+const turnUrls = (envTurnUrls && envTurnUrls.length > 0) ? envTurnUrls : DEFAULT_METERED_TURN_URLS;
+const turnUsername = process.env.EXPO_PUBLIC_TURN_USERNAME || '447b4f28b91ccea403c582b5';
+const turnCredential = process.env.EXPO_PUBLIC_TURN_CREDENTIAL || 'B69TvRRsfITwityj';
+
+const TURN_ICE_SERVERS = turnUrls.length > 0 && turnUsername && turnCredential
+  ? [
+      {
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      },
+    ]
   : [];
 
 export class WebRTCService {
@@ -36,8 +56,20 @@ export class WebRTCService {
   private myDeviceId: string;
   private isLocalMode: boolean = false;
   private localNetworkAddress: string | null = null;
+  private safetyUnsub: (() => void) | null = null;
+  private locallyMutedPeers: Set<string> = new Set();
 
   constructor(signaling: ISignalingService, myDeviceId: string, isLocalMode: boolean = false) {
+    this.safetyUnsub = safetyService.addBlockedListener((blockedIds) => {
+      const blockedSet = new Set(blockedIds);
+      this.remoteStreams.forEach((stream, peerId) => {
+        const isBlocked = blockedSet.has(peerId);
+        const isLocallyMuted = this.locallyMutedPeers.has(peerId);
+        stream.getAudioTracks().forEach((track) => {
+          track.enabled = !isBlocked && !isLocallyMuted;
+        });
+      });
+    });
     this.signaling = signaling;
     this.myDeviceId = myDeviceId;
     this.isLocalMode = isLocalMode;
@@ -92,7 +124,9 @@ export class WebRTCService {
 
   private getOrCreatePeer(deviceId: string, initiator: boolean): SimplePeer {
     const existing = this.peers.get(deviceId);
-    if (existing) return existing;
+    if (existing && !existing.isDestroyed) {
+      return existing;
+    }
 
     const iceServers = this.isLocalMode ? [] : [...STUN_ICE_SERVERS, ...TURN_ICE_SERVERS];
 
@@ -102,11 +136,9 @@ export class WebRTCService {
       iceServers,
       onSignal: (data: any) => {
         if (data.type === 'offer' || data.type === 'answer') {
-          this.signaling.send(data.type, { sdp: data.sdp, type: data.type }, deviceId)
-            .catch((err) => console.error('[WebRTC] Signal send failed:', err));
+          this.signaling.send(data.type, { sdp: data.sdp, type: data.type }, deviceId);
         } else if (data.candidate) {
-          this.signaling.send('ice-candidate', data.candidate, deviceId)
-            .catch((err) => console.error('[WebRTC] Candidate send failed:', err));
+          this.signaling.send('ice-candidate', data.candidate, deviceId);
         }
       },
       onStream: (remoteStream: MediaStream) => {
@@ -114,6 +146,14 @@ export class WebRTCService {
         this.remoteStreams.set(deviceId, remoteStream);
         const tracks = remoteStream.getAudioTracks().map((t) => `audio:${t.id}`);
         this.remoteTrackIds.set(deviceId, tracks);
+
+        const isBlocked = safetyService.isPeerBlocked(deviceId);
+        const isLocallyMuted = this.locallyMutedPeers.has(deviceId);
+        if (isBlocked || isLocallyMuted) {
+          remoteStream.getAudioTracks().forEach((track) => {
+            track.enabled = false;
+          });
+        }
 
         InCallManager.start({ media: 'audio', auto: false });
         InCallManager.setForceSpeakerphoneOn(true);
@@ -140,9 +180,13 @@ export class WebRTCService {
   }
 
   async createOffer(toDeviceId: string): Promise<void> {
-    if (this.peers.has(toDeviceId)) {
-      console.log('[WebRTC] Peer already exists for', toDeviceId);
+    const existing = this.peers.get(toDeviceId);
+    if (existing && !existing.isDestroyed && (existing.connectionState === 'connected' || existing.connectionState === 'connecting')) {
+      console.log('[WebRTC] Active peer already exists for', toDeviceId);
       return;
+    }
+    if (existing) {
+      await this.closePeer(toDeviceId);
     }
     console.log('[WebRTC] Initiating P2P mesh connection to', toDeviceId);
     this.getOrCreatePeer(toDeviceId, true);
@@ -159,6 +203,8 @@ export class WebRTCService {
     const peer = this.peers.get(fromDeviceId);
     if (peer) {
       await peer.signal(answerPayload);
+    } else {
+      console.warn('[WebRTC] Received answer for non-existent peer:', fromDeviceId);
     }
   }
 
@@ -198,6 +244,9 @@ export class WebRTCService {
   }
 
   async cleanup(): Promise<void> {
+    this.safetyUnsub?.();
+    this.safetyUnsub = null;
+    this.locallyMutedPeers.clear();
     InCallManager.stop();
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
@@ -208,8 +257,33 @@ export class WebRTCService {
     console.log('[WebRTC] Cleaned up all peers');
   }
 
+  setPeerAudioMuted(deviceId: string, muted: boolean): void {
+    if (muted) {
+      this.locallyMutedPeers.add(deviceId);
+    } else {
+      this.locallyMutedPeers.delete(deviceId);
+    }
+    const stream = this.remoteStreams.get(deviceId);
+    if (stream) {
+      const isBlocked = safetyService.isPeerBlocked(deviceId);
+      const shouldMute = muted || isBlocked;
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = !shouldMute;
+      });
+      console.log(`[WebRTC] Peer ${deviceId} audio enabled set to: ${!shouldMute}`);
+    }
+  }
+
+  isPeerAudioMuted(deviceId: string): boolean {
+    return this.locallyMutedPeers.has(deviceId);
+  }
+
   getConnectedPeerCount(): number {
     return Array.from(this.peers.values()).filter((p) => p.connectionState === 'connected').length;
+  }
+
+  getPeerIds(): string[] {
+    return Array.from(this.peers.keys());
   }
 
   hasPeer(deviceId: string): boolean {
@@ -260,8 +334,8 @@ export class WebRTCService {
           if (item.type === 'candidate-pair' && (item.id === selectedPairId || item.selected || (item.nominated && item.state === 'succeeded'))) {
             const local = byId.get(item.localCandidateId);
             const remote = byId.get(item.remoteCandidateId);
-            candidateTypes = `${local?.candidateType ?? 'unknown'} → ${remote?.candidateType ?? 'unknown'}`;
-            candidatePair = `${item.state}; ${local?.protocol ?? '?'} → ${remote?.protocol ?? '?'}; ${item.bytesReceived ?? 0} received / ${item.bytesSent ?? 0} sent`;
+            candidateTypes = `${local?.candidateType ?? 'unknown'}   ${remote?.candidateType ?? 'unknown'}`;
+            candidatePair = `${item.state}; ${local?.protocol ?? '?'}   ${remote?.protocol ?? '?'}; ${item.bytesReceived ?? 0} received / ${item.bytesSent ?? 0} sent`;
           }
           if ((item.type === 'local-candidate' || item.type === 'remote-candidate') && item.candidateType) foundTypes.add(item.candidateType);
         }
@@ -274,7 +348,7 @@ export class WebRTCService {
       const remoteAudio = this.remoteTrackIds.get(deviceId)?.join(', ') || 'no remote track';
       const iceSetup = this.isLocalMode
         ? `LAN host candidates${this.localNetworkAddress ? ` (${this.localNetworkAddress})` : ''}`
-        : 'STUN Google + Twilio configured';
+        : `STUN + Metered TURN Relay (${TURN_ICE_SERVERS.length > 0 ? 'Active' : 'Missing'})`;
       const candidateSummary = Object.entries(candidateCounts).filter(([, count]) => count > 0).map(([type, count]) => `${type}:${count}`).join(' ') || 'none';
 
       result.push({

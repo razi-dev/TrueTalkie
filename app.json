@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/true_talkie_icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0a0a0a"
-    },
     "plugins": [
       "@config-plugins/react-native-webrtc",
       [
@@ -43,8 +38,11 @@
         "CHANGE_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
         "CHANGE_WIFI_STATE",
-        "CHANGE_WIFI_MULTICAST_STATE"
-      ]
+        "CHANGE_WIFI_MULTICAST_STATE",
+        "POST_NOTIFICATIONS",
+        "BLUETOOTH"
+      ],
+      "versionCode": 1
     },
     "ios": {
       "supportsTablet": false,
@@ -55,10 +53,16 @@
           "audio",
           "voip"
         ]
-      }
+      },
+      "bitcode": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "096506aa-5ae1-4199-964e-00c058db688a"
+      }
     }
   }
 }
