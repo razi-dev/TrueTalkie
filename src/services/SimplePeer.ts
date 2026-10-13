@@ -1,6 +1,6 @@
 // src/services/SimplePeer.ts
-// Lightweight, robust WebRTC Peer wrapper based on react-native-simple-peer architecture.
-// Designed for multi-peer mesh (3-4+ devices) over both Local Wi-Fi and Internet.
+// Lightweight, robust WebRTC Peer wrapper with Perfect Negotiation (Glare Handling).
+// Designed for multi-peer mesh (3-4+ devices) over both Local Wi-Fi and Internet (STUN/TURN).
 
 import {
   RTCPeerConnection,
@@ -38,6 +38,7 @@ export class SimplePeer {
       { urls: 'stun:global.stun.twilio.com:3478' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun.relay.metered.ca:80' },
     ];
 
     const pc = new RTCPeerConnection({
@@ -148,24 +149,47 @@ export class SimplePeer {
     }
   }
 
-  // Handle incoming signal (offer, answer, or candidate)
+  // Handle incoming signal (offer, answer, or candidate) with glare protection
   async signal(data: any): Promise<void> {
     if (!this.pc || this.destroyed || !data) return;
 
     try {
       // 1. Remote Session Description (Offer or Answer)
       if (data.sdp && data.type) {
-        const desc = new RTCSessionDescription({ type: data.type, sdp: data.sdp });
-        await this.pc.setRemoteDescription(desc);
-
-        // Drain any ICE candidates received before remote description was ready
-        await this.drainPendingCandidates();
-
-        // If we received an offer, automatically respond with an answer
         if (data.type === 'offer') {
+          // Glare handling: if we already created a local offer
+          if (this.pc.signalingState === 'have-local-offer') {
+            if (!this.config.initiator) {
+              console.log('[SimplePeer] Glare detected: polite peer rolling back local offer');
+              try {
+                await (this.pc as any).setLocalDescription({ type: 'rollback' });
+              } catch (e) {
+                console.warn('[SimplePeer] Rollback non-critical error:', e);
+              }
+            } else {
+              console.log('[SimplePeer] Glare detected: impolite initiator ignoring remote offer');
+              return;
+            }
+          }
+
+          const desc = new RTCSessionDescription({ type: data.type, sdp: data.sdp });
+          await this.pc.setRemoteDescription(desc);
+          await this.drainPendingCandidates();
           await this.createAnswer();
+          return;
         }
-        return;
+
+        if (data.type === 'answer') {
+          // A remote answer is ONLY valid when we are in 'have-local-offer'
+          if (this.pc.signalingState !== 'have-local-offer') {
+            console.warn(`[SimplePeer] Ignoring duplicate/unexpected remote answer in state: ${this.pc.signalingState}`);
+            return;
+          }
+          const desc = new RTCSessionDescription({ type: data.type, sdp: data.sdp });
+          await this.pc.setRemoteDescription(desc);
+          await this.drainPendingCandidates();
+          return;
+        }
       }
 
       // 2. Remote ICE Candidate
@@ -204,6 +228,10 @@ export class SimplePeer {
   getStats(): Promise<any> {
     if (!this.pc || this.destroyed) return Promise.resolve(null);
     return this.pc.getStats();
+  }
+
+  get isDestroyed(): boolean {
+    return this.destroyed;
   }
 
   get connectionState(): string {

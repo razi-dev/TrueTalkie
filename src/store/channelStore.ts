@@ -45,6 +45,15 @@ interface ChannelStore {
   setTransmitting: (val: boolean) => void;
   transmittingPeer: string | null;
   setTransmittingPeer: (name: string | null) => void;
+
+  // Safety & Blocklist
+  blockedPeerIds: string[];
+  setBlockedPeerIds: (ids: string[]) => void;
+
+  // Per-peer voice muting (direct 1-tap mute without blocking)
+  mutedPeerIds: string[];
+  setMutedPeerIds: (ids: string[]) => void;
+  toggleMutePeer: (deviceId: string) => void;
 }
 
 const generateDeviceId = () =>
@@ -71,6 +80,7 @@ export const useChannelStore = create<ChannelStore>((set) => ({
       status: 'disconnected',
       localIp: null,
       transmittingPeer: null,
+      mutedPeerIds: [],
     }),
 
   status: 'disconnected',
@@ -93,4 +103,14 @@ export const useChannelStore = create<ChannelStore>((set) => ({
   setTransmitting: (val) => set({ isTransmitting: val }),
   transmittingPeer: null,
   setTransmittingPeer: (name) => set({ transmittingPeer: name }),
+  blockedPeerIds: [],
+  setBlockedPeerIds: (ids) => set({ blockedPeerIds: ids }),
+  mutedPeerIds: [],
+  setMutedPeerIds: (ids) => set({ mutedPeerIds: ids }),
+  toggleMutePeer: (deviceId) =>
+    set((state) => ({
+      mutedPeerIds: state.mutedPeerIds.includes(deviceId)
+        ? state.mutedPeerIds.filter((id) => id !== deviceId)
+        : [...state.mutedPeerIds, deviceId],
+    })),
 }));

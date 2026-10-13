@@ -7,18 +7,42 @@
       "developmentClient": true,
       "distribution": "internal",
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "autoIncrement": false
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://yimanuyxzwmjpooqxvdu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_nwy1Uy3DWIMAFqBajHMjIQ_LQ9_KVPa",
+        "EXPO_PUBLIC_TURN_URLS": "turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:80?transport=tcp,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp",
+        "EXPO_PUBLIC_TURN_USERNAME": "447b4f28b91ccea403c582b5",
+        "EXPO_PUBLIC_TURN_CREDENTIAL": "B69TvRRsfITwityj"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "autoIncrement": false
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://yimanuyxzwmjpooqxvdu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_nwy1Uy3DWIMAFqBajHMjIQ_LQ9_KVPa",
+        "EXPO_PUBLIC_TURN_URLS": "turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:80?transport=tcp,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp",
+        "EXPO_PUBLIC_TURN_USERNAME": "447b4f28b91ccea403c582b5",
+        "EXPO_PUBLIC_TURN_CREDENTIAL": "B69TvRRsfITwityj"
       }
     },
     "production": {
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "app-bundle",
+        "autoIncrement": false
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://yimanuyxzwmjpooqxvdu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_nwy1Uy3DWIMAFqBajHMjIQ_LQ9_KVPa",
+        "EXPO_PUBLIC_TURN_URLS": "turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:80?transport=tcp,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp",
+        "EXPO_PUBLIC_TURN_USERNAME": "447b4f28b91ccea403c582b5",
+        "EXPO_PUBLIC_TURN_CREDENTIAL": "B69TvRRsfITwityj"
       }
     }
   },

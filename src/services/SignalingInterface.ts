@@ -1,6 +1,6 @@
 // src/services/SignalingInterface.ts
 
-export type SignalType = 'offer' | 'answer' | 'ice-candidate';
+export type SignalType = 'offer' | 'answer' | 'ice-candidate' | 'ptt';
 
 export interface SignalMessage {
   type: SignalType;
@@ -16,3 +16,4 @@ export interface ISignalingService {
   send(type: SignalType, payload: any, toDevice?: string): Promise<void>;
   unsubscribe(): Promise<void>;
 }
+

@@ -1,4 +1,5 @@
-﻿// src/services/ChannelService.ts
+import { safetyService } from './SafetyService';
+// src/services/ChannelService.ts
 
 import { Platform, PermissionsAndroid } from 'react-native';
 import { supabase } from '../lib/supabase';
@@ -149,11 +150,8 @@ export class ChannelService {
       (this.signaling as LocalSignalingService)?.sendPttState(true);
     } else {
       this.webrtc?.startTransmitting();
-      this.presenceChannel?.track({
-        deviceId: this.opts?.myDeviceId,
-        name: this.opts?.myName,
-        transmitting: true,
-      });
+      // Send fast real-time PTT state over signaling without disturbing presence
+      this.signaling?.send('ptt', { transmitting: true, name: this.opts?.myName });
     }
   }
 
@@ -171,11 +169,8 @@ export class ChannelService {
       (this.signaling as LocalSignalingService)?.sendPttState(false);
     } else {
       this.webrtc?.stopTransmitting();
-      this.presenceChannel?.track({
-        deviceId: this.opts?.myDeviceId,
-        name: this.opts?.myName,
-        transmitting: false,
-      });
+      // Send fast real-time PTT state over signaling without disturbing presence
+      this.signaling?.send('ptt', { transmitting: false, name: this.opts?.myName });
     }
   }
 
@@ -263,49 +258,62 @@ export class ChannelService {
       config: { presence: { key: opts.myDeviceId } },
     });
 
-    this.presenceChannel
-      .on('presence', { event: 'sync' }, () => {
-        const state = this.presenceChannel.presenceState();
-        const peerList: { deviceId: string; name: string }[] = [];
-        let transmittingUser: { deviceId: string; name: string } | null = null;
+    const syncPeers = () => {
+      const state = this.presenceChannel.presenceState();
+      const peerList: { deviceId: string; name: string }[] = [];
+      const currentPeerIds = new Set<string>();
 
-        for (const [key, presences] of Object.entries(state) as [string, any[]][]) {
-          if (key === opts.myDeviceId) continue;
-          for (const p of presences) {
-            peerList.push({ deviceId: p.deviceId, name: p.name });
-            if (p.transmitting) {
-              transmittingUser = { deviceId: p.deviceId, name: p.name };
-            }
+      for (const [key, presences] of Object.entries(state) as [string, any[]][]) {
+        if (key === opts.myDeviceId) continue;
+        currentPeerIds.add(key);
+        for (const p of presences) {
+          peerList.push({ deviceId: p.deviceId || key, name: p.name || 'Peer' });
+        }
+      }
+
+      opts.onPeersChanged(peerList);
+
+      // Clean up any peers that truly disconnected from presence
+      if (this.webrtc) {
+        for (const peerId of this.webrtc.getPeerIds()) {
+          if (!currentPeerIds.has(peerId)) {
+            console.log('[ChannelService] Peer left presence:', peerId);
+            this.webrtc.closePeer(peerId);
           }
         }
+      }
 
-        opts.onPeersChanged(peerList);
-        opts.onTransmittingChanged(
-          transmittingUser?.deviceId || null,
-          transmittingUser?.name || null
-        );
-      })
-      .on('presence', { event: 'join' }, ({ newPresences }: any) => {
-        for (const p of newPresences) {
-          if (p.deviceId === opts.myDeviceId) continue;
-          this.webrtc?.createOffer(p.deviceId);
+      // Asymmetric negotiation:
+      // Only the peer with the lexicographically higher device ID initiates the offer.
+      // The other peer waits and answers. This eliminates WebRTC offer collisions completely!
+      for (const peerId of currentPeerIds) {
+        if (opts.myDeviceId > peerId) {
+          this.webrtc?.createOffer(peerId);
         }
-      })
-      .on('presence', { event: 'leave' }, ({ leftPresences }: any) => {
-        for (const p of leftPresences) {
-          this.webrtc?.closePeer(p.deviceId);
-        }
-      });
+      }
+    };
+
+    this.presenceChannel
+      .on('presence', { event: 'sync' }, () => syncPeers())
+      .on('presence', { event: 'join' }, () => syncPeers())
+      .on('presence', { event: 'leave' }, () => syncPeers());
 
     await this.presenceChannel.subscribe(async (status: string) => {
       if (status === 'SUBSCRIBED') {
         await this.presenceChannel.track({
           deviceId: opts.myDeviceId,
           name: opts.myName,
-          transmitting: false,
         });
       }
     });
+  }
+
+  setPeerAudioMuted(deviceId: string, muted: boolean): void {
+    this.webrtc?.setPeerAudioMuted(deviceId, muted);
+  }
+
+  isPeerAudioMuted(deviceId: string): boolean {
+    return this.webrtc?.isPeerAudioMuted(deviceId) || false;
   }
 
   private handleSignal(msg: SignalMessage): void {
@@ -316,6 +324,21 @@ export class ChannelService {
         this.webrtc.handleAnswer(msg.from_device, msg.payload);
       } else if (msg.type === 'ice-candidate') {
         this.webrtc.handleIceCandidate(msg.from_device, msg.payload);
+      } else if (msg.type === 'ptt') {
+        const isBlocked = safetyService.isPeerBlocked(msg.from_device);
+        const isMuted = this.isPeerAudioMuted(msg.from_device);
+        if (isBlocked || isMuted) {
+          if (!Boolean(msg.payload?.transmitting)) {
+            this.opts?.onTransmittingChanged(null, null);
+          }
+          return;
+        }
+        const isTx = Boolean(msg.payload?.transmitting);
+        const name = msg.payload?.name || null;
+        this.opts?.onTransmittingChanged(
+          isTx ? msg.from_device : null,
+          isTx ? name : null
+        );
       }
     }
   }
